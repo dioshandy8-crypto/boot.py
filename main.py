@@ -1,35 +1,72 @@
-# Tambahkan ini di CONFIG atau config.json
-# "RECOIL_AMOUNT": 15 (berapa pixel mouse turun setelah flick)
+import time, random, threading, numpy as np, win32api, win32con, os, json
+from PIL import ImageGrab
+from pynput import mouse, keyboard
+
+# Konfigurasi Default (Langsung di dalam kode agar aman tanpa CMD)
+CONFIG = {
+    "SMOOTHING": 0.4,
+    "FOV": 40,
+    "TOLERANCE": 40,
+    "HEAD_OFFSET": 5,
+    "RECOIL_AMOUNT": 15
+}
 
 class FlickBot:
     def __init__(self):
-        self.is_holding, self.running = False, True
+        self.is_holding = False
         self.has_flicked = False
-        self.cx, self.cy = 960, 540 
+        # Ambil resolusi layar otomatis
+        self.cx = win32api.GetSystemMetrics(0) // 2
+        self.cy = win32api.GetSystemMetrics(1) // 2
 
-    def flick(self, tx, ty):
-        mx = int((tx - self.cx) * CONFIG["SMOOTHING"])
-        my = int((ty - self.cy) * CONFIG["SMOOTHING"])
-        win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, mx, my, 0, 0)
+    def scan_and_flick(self):
+        f = CONFIG["FOV"]
+        bbox = (self.cx - f, self.cy - f, self.cx + f, self.cy + f)
+        # Ambil gambar di tengah layar
+        img = ImageGrab.grab(bbox=bbox)
+        px = np.array(img)
+        
+        # Cari warna ungu (target default game FPS)
+        for y in range(0, len(px), 2):
+            for x in range(0, len(px[y]), 2):
+                r, g, b = px[y][x]
+                if abs(r - 250) < CONFIG["TOLERANCE"] and abs(g - 100) < CONFIG["TOLERANCE"] and abs(b - 250) < CONFIG["TOLERANCE"]:
+                    # Hitung posisi target
+                    tx = x + (self.cx - f)
+                    ty = y + (self.cy - f) - CONFIG["HEAD_OFFSET"]
+                    
+                    # Eksekusi Flick
+                    mx = int((tx - self.cx) * CONFIG["SMOOTHING"])
+                    my = int((ty - self.cy) * CONFIG["SMOOTHING"])
+                    win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, mx, my, 0, 0)
+                    
+                    # Recoil Control (Tarik kebawah sedikit)
+                    time.sleep(0.02)
+                    recoil = CONFIG["RECOIL_AMOUNT"] + random.randint(-2, 2)
+                    win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, recoil, 0, 0)
+                    return True
+        return False
 
     def main_loop(self):
-        while self.running:
-            if self.is_holding:
-                if not self.has_flicked:
-                    target = self.scan_for_head()
-                    if target:
-                        # 1. Flick ke target
-                        self.flick(target[0], target[1])
-                        
-                        # 2. Delay sangat singkat agar peluru keluar dulu
-                        time.sleep(0.02) 
-                        
-                        # 3. Recoil Control (Mouse ditarik ke bawah)
-                        recoil = CONFIG.get("RECOIL_AMOUNT", 15)
-                        win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, recoil, 0, 0)
-                        
-                        self.has_flicked = True 
-            else:
-                self.has_flicked = False
-            
+        while True:
+            if self.is_holding and not self.has_flicked:
+                if self.scan_and_flick():
+                    self.has_flicked = True # Kunci agar cuma flick 1x
+            elif not self.is_holding:
+                self.has_flicked = False # Reset saat lepas klik
             time.sleep(0.001)
+
+bot = FlickBot()
+
+def on_click(x, y, button, pressed):
+    if button == mouse.Button.left:
+        bot.is_holding = pressed
+
+def on_press(key):
+    if key == keyboard.Key.delete: # Tekan tombol DELETE untuk mematikan
+        os._exit(0)
+
+# Jalankan Bot
+threading.Thread(target=bot.main_loop, daemon=True).start()
+with mouse.Listener(on_click=on_click) as ml, keyboard.Listener(on_press=on_press) as kl:
+    kl.join(); ml.join()
