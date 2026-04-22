@@ -1,0 +1,4 @@
+numpy
+pillow
+pynput
+pywin32
